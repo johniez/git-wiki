@@ -31,6 +31,10 @@ except IOError:
     print ("Startup Failure: You need to place a "
            "config.py in your content directory.")
 
+# optional git support based on USE_GIT config variable
+if app.config.get('USE_GIT'):
+    import git
+
 manager = Manager(app)
 
 loginmanager = LoginManager()
@@ -324,6 +328,28 @@ class Wiki(object):
         return matched
 
 
+class WikiGit(Wiki):
+    def __init__(self, root):
+        super(WikiGit, self).__init__(root)
+        self.repo = git.Repo(root).git
+
+    def save(self, url, body, meta):
+        super(WikiGit, self).save(url, body, meta)
+        self.repo.add(url + '.md')
+        self.repo.commit(m="changed")
+
+    def move(self, url, newurl):
+        self.repo.mv(url + '.md', newurl + '.md')
+        self.repo.commit(m="file moved")
+
+    def delete(self, url):
+        if not self.exists(url):
+            return False
+        self.repo.rm(url + '.md')
+        self.repo.commit(m="file deleted")
+        return True
+
+
 """
     User classes & helpers
     ~~~~~~~~~~~~~~~~~~~~~~
@@ -510,7 +536,8 @@ class LoginForm(Form):
             raise ValidationError('Username and password do not match.')
 
 
-wiki = Wiki(app.config.get('CONTENT_DIR'))
+ENGINE = Wiki if not app.config.get('USE_GIT') else WikiGit
+wiki = ENGINE(app.config.get('CONTENT_DIR'))
 
 users = UserManager(app.config.get('CONTENT_DIR'))
 
