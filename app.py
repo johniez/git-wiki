@@ -137,34 +137,24 @@ class Processors(object):
 
 
 class Page(object):
-    def __init__(self, path, url, new=False):
-        self.path = path
+    def __init__(self, engine, url, new=False):
         self.url = url
         self._meta = {}
         if not new:
-            self.load()
+            self.load(engine)
             self.render()
 
-    def load(self):
-        with open(self.path, 'rU') as f:
-            self.content = f.read().decode('utf-8')
+    def load(self, engine):
+        self.content = engine.load(self.url)
 
     def render(self):
         processed = Processors(self.content)
         self._html, self.body, self._meta = processed.out()
 
-    def save(self, update=True):
-        folder = os.path.dirname(self.path)
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-        with open(self.path, 'w') as f:
-            for key, value in self._meta.items():
-                line = u'%s: %s\n' % (key, value)
-                f.write(line.encode('utf-8'))
-            f.write('\n'.encode('utf-8'))
-            f.write(self.body.replace('\r\n', '\n').encode('utf-8'))
+    def save(self, engine, update=True):
+        engine.save(self.url, self.body, self._meta)
         if update:
-            self.load()
+            self.load(engine)
             self.render()
 
     @property
@@ -225,7 +215,7 @@ class Wiki(object):
     def get(self, url):
         path = os.path.join(self.root, url + '.md')
         if self.exists(url):
-            return Page(path, url)
+            return Page(self, url)
         return None
 
     def get_or_404(self, url):
@@ -238,7 +228,24 @@ class Wiki(object):
         path = self.path(url)
         if self.exists(url):
             return False
-        return Page(path, url, new=True)
+        return Page(self, url, new=True)
+
+    def load(self, url):
+        path = self.path(url)
+        with open(path, 'rU') as f:
+            return f.read().decode('utf-8')
+
+    def save(self, url, body, meta):
+        path = self.path(url)
+        folder = os.path.dirname(path)
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        with open(path, 'w') as f:
+            for key, value in meta.items():
+                line = u'%s: %s\n' % (key, value)
+                f.write(line.encode('utf-8'))
+            f.write('\n'.encode('utf-8'))
+            f.write(body.replace('\r\n', '\n').encode('utf-8'))
 
     def move(self, url, newurl):
         os.rename(
@@ -268,7 +275,7 @@ class Wiki(object):
                     if attr:
                         pages[getattr(page, attr)] = page  # TODO: looks like bug, but doesn't appear to be used
                     else:
-                        pages.append(Page(fullname, url.replace('\\', '/')))
+                        pages.append(Page(self, url.replace('\\', '/')))
         if attr:
             pages = {}
         else:
@@ -561,7 +568,7 @@ def edit(url):
         if not page:
             page = wiki.get_bare(url)
         form.populate_obj(page)
-        page.save()
+        page.save(wiki)
         flash('"%s" was saved.' % page.title, 'success')
         return redirect(url_for('display', url=url))
     return render_template('editor.html', form=form, page=page)
