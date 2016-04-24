@@ -252,10 +252,25 @@ class Wiki(object):
             f.write(body.replace('\r\n', '\n').encode('utf-8'))
 
     def move(self, url, newurl):
-        os.rename(
-            os.path.join(self.root, url) + '.md',
-            os.path.join(self.root, newurl) + '.md'
-        )
+        source = os.path.join(self.root, url) + '.md'
+        target = os.path.join(self.root, newurl) + '.md'
+        # normalize root path (just in case somebody defined it absolute,
+        # having some '../' inside) to correctly compare it to the target
+        root = os.path.normpath(self.root)
+        # get root path longest common prefix with normalized target path
+        common = os.path.commonprefix((root, os.path.normpath(target)))
+        # common prefix length must be at least as root length is
+        # otherwise there are probably some '..' links in target path leading
+        # us outside defined root directory
+        if len(common) < len(root):
+            raise RuntimeError(
+                'Possible write attempt outside content directory: '
+                '%s' % newurl)
+        # create folder if it does not exists yet
+        folder = os.path.dirname(target)
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        os.rename(source, target)
 
     def delete(self, url):
         path = self.path(url)
