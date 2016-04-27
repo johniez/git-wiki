@@ -34,6 +34,8 @@ except IOError:
 # optional git support based on USE_GIT config variable
 if app.config.get('USE_GIT'):
     import git
+    import fasteners
+    GIT_LOCK_FILE = app.config.get('GIT_LOCK_FILE')
 
 manager = Manager(app)
 
@@ -348,16 +350,48 @@ class WikiGit(Wiki):
         super(WikiGit, self).__init__(root)
         self.repo = git.Repo(root).git
 
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
+    def load(self, url):
+        """Load content, waiting for merge to complete."""
+        return super(WikiGit, self).load(url)
+
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
     def save(self, url, body, meta):
+        """
+        Save file and commit changes to the repository.
+        Current approach is very stupid, overwriting previous changes if
+        commit is not the latest one for that file.
+
+        Solution can be (if parent commit is known):
+          * git checkout -b changes
+          * git reset --hard $parent
+          * write new file content - save(url, body, meta)
+          * git commit -am $commit_message
+          * git merge master
+        On error (conflict), return to the master branch:
+            * read file content to merge by user
+            * git reset --hard
+            * git checkout master
+            * git branch -D changes
+            * and deliver previously read content to the user to resolve merge
+        On success:
+            * git checkout master
+            * git merge changes
+            * git branch -D changes
+        """
         super(WikiGit, self).save(url, body, meta)
         self.repo.add(url + '.md')
         self.repo.commit(m="changed")
 
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
     def move(self, url, newurl):
+        """Rename url's file inside a repository."""
         self.repo.mv(url + '.md', newurl + '.md')
         self.repo.commit(m="file moved")
 
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
     def delete(self, url):
+        """Delete url's file from repository."""
         if not self.exists(url):
             return False
         self.repo.rm(url + '.md')
