@@ -6,7 +6,7 @@ import markdown
 import json
 from functools import wraps
 from flask import (Flask, render_template, flash, redirect, url_for, request,
-                   abort)
+                   abort, session)
 from flask.ext.wtf import Form
 from wtforms import (BooleanField, TextField, TextAreaField, PasswordField)
 from wtforms.validators import (InputRequired, ValidationError)
@@ -381,7 +381,9 @@ class WikiGit(Wiki):
         """
         super(WikiGit, self).save(url, body, meta)
         self.repo.add(url + '.md')
-        self.repo.commit(m="changed")
+        author = session['user_id'] if 'user_id' in session else 'anonymouse'
+        author += ' <' + author + '>'
+        self.repo.commit(m="changed", author=author)
 
     @fasteners.interprocess_locked(GIT_LOCK_FILE)
     def move(self, url, newurl):
@@ -397,6 +399,14 @@ class WikiGit(Wiki):
         self.repo.rm(url + '.md')
         self.repo.commit(m="file deleted")
         return True
+
+    def get_or_404(self, url):
+        page = super(WikiGit, self).get_or_404(url)
+        page.history = self.history(url)
+        return page
+
+    def history(self, url):
+        return self.repo.log(format="%h|%an").split('\n')
 
 
 """
