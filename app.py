@@ -4,6 +4,7 @@ import os
 import re
 import markdown
 import json
+import fasteners
 from functools import wraps
 from flask import (Flask, render_template, flash, redirect, url_for, request,
                    abort, session)
@@ -42,7 +43,9 @@ manager = Manager(app)
 loginmanager = LoginManager()
 loginmanager.init_app(app)
 loginmanager.login_view = 'user_login'
-
+app.config['USER_LOCK_FILE'] = app.config.get(
+    'USER_LOCK_FILE',
+    os.path.join(app.config.get('CONTENT_DIR'), 'users.lock'))
 
 
 """
@@ -428,9 +431,16 @@ class UserManager(object):
         return data
 
     def write(self, data):
-        with open(self.file, 'w') as f:
+        # prepare new users file content in tmp file
+        tmp_file = self.file + '-write'
+        with open(tmp_file, 'w') as f:
             f.write(json.dumps(data, indent=2))
+            f.flush()
+            os.fsync(f.fileno())
+        # atomically switch users file with the new one
+        os.rename(tmp_file, self.file)
 
+    @fasteners.interprocess_locked(app.config.get('USER_LOCK_FILE'))
     def add_user(self, name, password,
                  active=True, roles=[], authentication_method=None):
         users = self.read()
@@ -442,7 +452,6 @@ class UserManager(object):
             'active': active,
             'roles': roles,
             'authentication_method': authentication_method,
-            'authenticated': False
         }
         # Currently we have only two authentication_methods: cleartext and
         # hash. If we get more authentication_methods, we will need to go to a
@@ -459,12 +468,14 @@ class UserManager(object):
         return User(self, name, userdata)
 
     def get_user(self, name):
+        # no locking is made as the self.write() is atomic by rename operation
         users = self.read()
         userdata = users.get(name)
         if not userdata:
             return None
         return User(self, name, userdata)
 
+    @fasteners.interprocess_locked(app.config.get('USER_LOCK_FILE'))
     def delete_user(self, name):
         users = self.read()
         if not users.pop(name, False):
@@ -472,6 +483,7 @@ class UserManager(object):
         self.write(users)
         return True
 
+    @fasteners.interprocess_locked(app.config.get('USER_LOCK_FILE'))
     def update(self, name, userdata):
         data = self.read()
         data[name] = userdata
@@ -495,7 +507,7 @@ class User(object):
         self.manager.update(self.name, self.data)
 
     def is_authenticated(self):
-        return self.data.get('authenticated')
+        return True
 
     def is_active(self):
         return self.data.get('active')
@@ -604,7 +616,6 @@ users = UserManager(app.config.get('CONTENT_DIR'))
 @loginmanager.user_loader
 def load_user(name):
     return users.get_user(name)
-
 
 
 """
@@ -722,7 +733,6 @@ def user_login():
     if form.validate_on_submit():
         user = users.get_user(form.name.data)
         login_user(user)
-        user.set('authenticated', True)
         flash('Login successful.', 'success')
         return redirect(request.args.get("next") or url_for('index'))
     return render_template('login.html', form=form)
@@ -731,7 +741,6 @@ def user_login():
 @app.route('/user/logout/')
 @login_required
 def user_logout():
-    current_user.set('authenticated', False)
     logout_user()
     flash('Logout successful.', 'success')
     return redirect(url_for('index'))
