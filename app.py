@@ -413,6 +413,15 @@ class WikiGit(Wiki):
     def history(self, url):
         return self.repo.log(format="%h|%an").split('\n')
 
+    def search(self, term, ignore_case=True):
+        try:
+            results = self.repo.grep(term, G=True, i=ignore_case).split('\n')
+            # split filename:match for file names only (matched text can be
+            # used to output in the future).
+            return [Page(self, r.split(':')[0][:-3]) for r in results]
+        except git.exc.GitCommandError:
+            return super(WikiGit, self).search(term)
+
 
 """
     User classes & helpers
