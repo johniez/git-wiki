@@ -4,9 +4,10 @@ import os
 import re
 import markdown
 import json
+import fasteners
 from functools import wraps
 from flask import (Flask, render_template, flash, redirect, url_for, request,
-                   abort)
+                   abort, session)
 from flask.ext.wtf import Form
 from wtforms import (BooleanField, TextField, TextAreaField, PasswordField)
 from wtforms.validators import (InputRequired, ValidationError)
@@ -31,12 +32,19 @@ except IOError:
     print ("Startup Failure: You need to place a "
            "config.py in your content directory.")
 
+# optional git support based on USE_GIT config variable
+if app.config.get('USE_GIT'):
+    import git
+    GIT_LOCK_FILE = app.config.get('GIT_LOCK_FILE')
+
 manager = Manager(app)
 
 loginmanager = LoginManager()
 loginmanager.init_app(app)
 loginmanager.login_view = 'user_login'
-
+app.config['USER_LOCK_FILE'] = app.config.get(
+    'USER_LOCK_FILE',
+    os.path.join(app.config.get('CONTENT_DIR'), 'users.lock'))
 
 
 """
@@ -137,34 +145,24 @@ class Processors(object):
 
 
 class Page(object):
-    def __init__(self, path, url, new=False):
-        self.path = path
+    def __init__(self, engine, url, new=False):
         self.url = url
         self._meta = {}
         if not new:
-            self.load()
+            self.load(engine)
             self.render()
 
-    def load(self):
-        with open(self.path, 'rU') as f:
-            self.content = f.read().decode('utf-8')
+    def load(self, engine):
+        self.content = engine.load(self.url)
 
     def render(self):
         processed = Processors(self.content)
         self._html, self.body, self._meta = processed.out()
 
-    def save(self, update=True):
-        folder = os.path.dirname(self.path)
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-        with open(self.path, 'w') as f:
-            for key, value in self._meta.items():
-                line = u'%s: %s\n' % (key, value)
-                f.write(line.encode('utf-8'))
-            f.write('\n'.encode('utf-8'))
-            f.write(self.body.replace('\r\n', '\n').encode('utf-8'))
+    def save(self, engine, update=True):
+        engine.save(self.url, self.body, self._meta)
         if update:
-            self.load()
+            self.load(engine)
             self.render()
 
     @property
@@ -225,7 +223,7 @@ class Wiki(object):
     def get(self, url):
         path = os.path.join(self.root, url + '.md')
         if self.exists(url):
-            return Page(path, url)
+            return Page(self, url)
         return None
 
     def get_or_404(self, url):
@@ -238,7 +236,24 @@ class Wiki(object):
         path = self.path(url)
         if self.exists(url):
             return False
-        return Page(path, url, new=True)
+        return Page(self, url, new=True)
+
+    def load(self, url):
+        path = self.path(url)
+        with open(path, 'rU') as f:
+            return f.read().decode('utf-8')
+
+    def save(self, url, body, meta):
+        path = self.path(url)
+        folder = os.path.dirname(path)
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        with open(path, 'w') as f:
+            for key, value in meta.items():
+                line = u'%s: %s\n' % (key, value)
+                f.write(line.encode('utf-8'))
+            f.write('\n'.encode('utf-8'))
+            f.write(body.replace('\r\n', '\n').encode('utf-8'))
 
     def move(self, url, newurl):
         source = os.path.join(self.root, url) + '.md'
@@ -283,7 +298,7 @@ class Wiki(object):
                     if attr:
                         pages[getattr(page, attr)] = page  # TODO: looks like bug, but doesn't appear to be used
                     else:
-                        pages.append(Page(fullname, url.replace('\\', '/')))
+                        pages.append(Page(self, url.replace('\\', '/')))
         if attr:
             pages = {}
         else:
@@ -332,6 +347,70 @@ class Wiki(object):
         return matched
 
 
+class WikiGit(Wiki):
+    def __init__(self, root):
+        super(WikiGit, self).__init__(root)
+        self.repo = git.Repo(root).git
+
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
+    def load(self, url):
+        """Load content, waiting for merge to complete."""
+        return super(WikiGit, self).load(url)
+
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
+    def save(self, url, body, meta):
+        """
+        Save file and commit changes to the repository.
+        Current approach is very stupid, overwriting previous changes if
+        commit is not the latest one for that file.
+
+        Solution can be (if parent commit is known):
+          * git checkout -b changes
+          * git reset --hard $parent
+          * write new file content - save(url, body, meta)
+          * git commit -am $commit_message
+          * git merge master
+        On error (conflict), return to the master branch:
+            * read file content to merge by user
+            * git reset --hard
+            * git checkout master
+            * git branch -D changes
+            * and deliver previously read content to the user to resolve merge
+        On success:
+            * git checkout master
+            * git merge changes
+            * git branch -D changes
+        """
+        super(WikiGit, self).save(url, body, meta)
+        self.repo.add(url + '.md')
+        author = session['user_id'] if 'user_id' in session else 'anonymouse'
+        author += ' <' + author + '>'
+        self.repo.commit(m="changed", author=author)
+
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
+    def move(self, url, newurl):
+        """Rename url's file inside a repository."""
+        self.repo.mv(url + '.md', newurl + '.md')
+        self.repo.commit(m="file moved")
+
+    @fasteners.interprocess_locked(GIT_LOCK_FILE)
+    def delete(self, url):
+        """Delete url's file from repository."""
+        if not self.exists(url):
+            return False
+        self.repo.rm(url + '.md')
+        self.repo.commit(m="file deleted")
+        return True
+
+    def get_or_404(self, url):
+        page = super(WikiGit, self).get_or_404(url)
+        page.history = self.history(url)
+        return page
+
+    def history(self, url):
+        return self.repo.log(format="%h|%an").split('\n')
+
+
 """
     User classes & helpers
     ~~~~~~~~~~~~~~~~~~~~~~
@@ -351,9 +430,16 @@ class UserManager(object):
         return data
 
     def write(self, data):
-        with open(self.file, 'w') as f:
+        # prepare new users file content in tmp file
+        tmp_file = self.file + '-write'
+        with open(tmp_file, 'w') as f:
             f.write(json.dumps(data, indent=2))
+            f.flush()
+            os.fsync(f.fileno())
+        # atomically switch users file with the new one
+        os.rename(tmp_file, self.file)
 
+    @fasteners.interprocess_locked(app.config.get('USER_LOCK_FILE'))
     def add_user(self, name, password,
                  active=True, roles=[], authentication_method=None):
         users = self.read()
@@ -365,7 +451,6 @@ class UserManager(object):
             'active': active,
             'roles': roles,
             'authentication_method': authentication_method,
-            'authenticated': False
         }
         # Currently we have only two authentication_methods: cleartext and
         # hash. If we get more authentication_methods, we will need to go to a
@@ -382,12 +467,14 @@ class UserManager(object):
         return User(self, name, userdata)
 
     def get_user(self, name):
+        # no locking is made as the self.write() is atomic by rename operation
         users = self.read()
         userdata = users.get(name)
         if not userdata:
             return None
         return User(self, name, userdata)
 
+    @fasteners.interprocess_locked(app.config.get('USER_LOCK_FILE'))
     def delete_user(self, name):
         users = self.read()
         if not users.pop(name, False):
@@ -395,6 +482,7 @@ class UserManager(object):
         self.write(users)
         return True
 
+    @fasteners.interprocess_locked(app.config.get('USER_LOCK_FILE'))
     def update(self, name, userdata):
         data = self.read()
         data[name] = userdata
@@ -418,7 +506,7 @@ class User(object):
         self.manager.update(self.name, self.data)
 
     def is_authenticated(self):
-        return self.data.get('authenticated')
+        return True
 
     def is_active(self):
         return self.data.get('active')
@@ -518,7 +606,8 @@ class LoginForm(Form):
             raise ValidationError('Username and password do not match.')
 
 
-wiki = Wiki(app.config.get('CONTENT_DIR'))
+ENGINE = Wiki if not app.config.get('USE_GIT') else WikiGit
+wiki = ENGINE(app.config.get('CONTENT_DIR'))
 
 users = UserManager(app.config.get('CONTENT_DIR'))
 
@@ -526,7 +615,6 @@ users = UserManager(app.config.get('CONTENT_DIR'))
 @loginmanager.user_loader
 def load_user(name):
     return users.get_user(name)
-
 
 
 """
@@ -576,7 +664,7 @@ def edit(url):
         if not page:
             page = wiki.get_bare(url)
         form.populate_obj(page)
-        page.save()
+        page.save(wiki)
         flash('"%s" was saved.' % page.title, 'success')
         return redirect(url_for('display', url=url))
     return render_template('editor.html', form=form, page=page)
@@ -644,7 +732,6 @@ def user_login():
     if form.validate_on_submit():
         user = users.get_user(form.name.data)
         login_user(user)
-        user.set('authenticated', True)
         flash('Login successful.', 'success')
         return redirect(request.args.get("next") or url_for('index'))
     return render_template('login.html', form=form)
@@ -653,7 +740,6 @@ def user_login():
 @app.route('/user/logout/')
 @login_required
 def user_logout():
-    current_user.set('authenticated', False)
     logout_user()
     flash('Logout successful.', 'success')
     return redirect(url_for('index'))

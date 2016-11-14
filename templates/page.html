@@ -21,6 +21,9 @@
 {% endblock content %}
 
 {% block sidebar %}
+{% for hist in page.history %}
+  <li>{{ hist }}</li>
+{% endfor %}
 {% if page.tags %}
 <h3>Tags</h3>
   <ul>
