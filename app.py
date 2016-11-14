@@ -35,7 +35,6 @@ except IOError:
 # optional git support based on USE_GIT config variable
 if app.config.get('USE_GIT'):
     import git
-    import fasteners
     GIT_LOCK_FILE = app.config.get('GIT_LOCK_FILE')
 
 manager = Manager(app)
