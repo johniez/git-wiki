@@ -21,14 +21,19 @@
 {% endblock content %}
 
 {% block sidebar %}
-{% for hist in page.history %}
-  <li>{{ hist }}</li>
-{% endfor %}
 {% if page.tags %}
 <h3>Tags</h3>
   <ul>
       {% for tag in page.tags.split(',') %}
         <li><a href="{{ url_for('tag', name=tag.strip()) }}">{{ tag|trim }}</a></li>
+      {% endfor %}
+  </ul>
+{% endif %}
+{% if page.history %}
+<h3>History</h3>
+  <ul>
+      {% for hist in page.history %}
+        <li>{{ hist.timestamp}} | {{ hist.author }}</li>
       {% endfor %}
   </ul>
 {% endif %}

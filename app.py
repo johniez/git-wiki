@@ -5,6 +5,7 @@ import re
 import markdown
 import json
 import fasteners
+import datetime
 from functools import wraps
 from flask import (Flask, render_template, flash, redirect, url_for, request,
                    abort, session)
@@ -351,6 +352,20 @@ class Wiki(object):
 
 
 class WikiGit(Wiki):
+    class Commit(object):
+        log_formatter = "%h%x00%at%x00%an"
+
+        def __init__(self, commit_hash, commit_timestamp, commit_author):
+            self.commit = commit_hash
+            self.timestamp = datetime.datetime.fromtimestamp(
+                int(commit_timestamp))
+            self.author = commit_author
+
+        @staticmethod
+        def from_gitlog(string):
+            data = string.split('\0')
+            return WikiGit.Commit(data[0], data[1], data[2])
+
     def __init__(self, root):
         super(WikiGit, self).__init__(root)
         self.repo = git.Repo(root).git
@@ -410,8 +425,12 @@ class WikiGit(Wiki):
         page.history = self.history(url)
         return page
 
-    def history(self, url):
-        return self.repo.log(format="%h|%an").split('\n')
+    def history(self, url, offset=0, limit=5):
+        return [
+            self.Commit.from_gitlog(rec)
+            for rec in self.repo.log(
+                format=self.Commit.log_formatter).split('\n')
+        ][offset:limit]
 
     def search(self, term, ignore_case=True):
         try:
