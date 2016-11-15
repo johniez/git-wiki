@@ -429,6 +429,7 @@ class WikiGit(Wiki):
         return [
             self.Commit.from_gitlog(rec)
             for rec in self.repo.log(
+                url + '.md',
                 format=self.Commit.log_formatter).split('\n')
         ][offset:limit]
 
