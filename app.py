@@ -457,7 +457,7 @@ class WikiGit(Wiki):
     def show(self, commit):
         # TODO catch git.exc.GitCommandError and raise 404 or 500
         data = self.repo.show(
-            commit, M=9,
+            commit, '-M9',
             pretty="format:" + self.Commit.log_formatter + '%x00',
         ).split('\0')
         return self.Commit(data[0], data[1], data[2], data[3].strip())
