@@ -94,6 +94,19 @@ class Processors(object):
         return html
 
     @staticmethod
+    def highlite_diff(raw_diff):
+        """
+        Return HTML string - highlited raw_diff data using markdown.
+        Four space characters are prepended to each diff line, to be
+        considered a code block by markdown.
+        """
+        md = markdown.Markdown(['codehilite'])
+        html = md.convert(
+            '\n'.join(map(lambda line: u"{}{}".format(4 * " ", line),
+                          raw_diff.strip().split('\n'))))
+        return html
+
+    @staticmethod
     def clean_url(url):
         """Cleans the url and corrects various errors.  Removes multiple spaces
         and all leading and trailing spaces.  Changes spaces to underscores and
@@ -355,16 +368,23 @@ class WikiGit(Wiki):
     class Commit(object):
         log_formatter = "%h%x00%at%x00%an"
 
-        def __init__(self, commit_hash, commit_timestamp, commit_author):
+        def __init__(self, commit_hash, commit_timestamp, commit_author,
+                     commit_data=None):
             self.commit = commit_hash
             self.timestamp = datetime.datetime.fromtimestamp(
                 int(commit_timestamp))
             self.author = commit_author
+            self.data = commit_data
 
         @staticmethod
         def from_gitlog(string):
             data = string.split('\0')
             return WikiGit.Commit(data[0], data[1], data[2])
+
+        def highlite_diff(self):
+            if self.data:
+                return Processors.highlite_diff(self.data)
+            return ""
 
     def __init__(self, root):
         super(WikiGit, self).__init__(root)
@@ -426,12 +446,21 @@ class WikiGit(Wiki):
         return page
 
     def history(self, url, offset=0, limit=5):
+        # TODO catch git.exc.GitCommandError and raise 404 or 500
         return [
             self.Commit.from_gitlog(rec)
             for rec in self.repo.log(
                 url + '.md',
                 format=self.Commit.log_formatter).split('\n')
         ][offset:limit]
+
+    def show(self, commit):
+        # TODO catch git.exc.GitCommandError and raise 404 or 500
+        data = self.repo.show(
+            commit, M=9,
+            pretty="format:" + self.Commit.log_formatter + '%x00',
+        ).split('\0')
+        return self.Commit(data[0], data[1], data[2], data[3].strip())
 
     def search(self, term, ignore_case=True):
         try:
@@ -780,6 +809,20 @@ def search():
         return render_template('search.html', form=form,
                                results=results, search=form.term.data)
     return render_template('search.html', form=form, search=None)
+
+
+@app.route('/history/<path:url>/')
+@protect
+def history_page(url):
+    history_limit = 1000
+    commit_object = None
+    commit = request.args.get('commit')
+    if commit:
+        commit_object = wiki.show(commit)
+        history_limit = request.args.get('limit', 10)
+    history = wiki.history(url, limit=history_limit)
+    return render_template(
+        'history.html', url=url, history=history, commit=commit_object)
 
 
 @app.route('/user/login/', methods=['GET', 'POST'])

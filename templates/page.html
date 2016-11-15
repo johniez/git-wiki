@@ -33,7 +33,7 @@
 <h3>History</h3>
   <ul>
       {% for hist in page.history %}
-        <li>{{ hist.timestamp}} | {{ hist.author }}</li>
+        <li><a href="/history/{{page.url}}/?commit={{hist.commit}}">{{ hist.timestamp }}</a> by {{ hist.author }}</li>
       {% endfor %}
   </ul>
 {% endif %}
@@ -42,5 +42,6 @@
 	<li><a href="{{ url_for('edit', url=page.url) }}">Edit</a></li>
   <li><a href="{{ url_for('move', url=page.url) }}">Move</a></li>
   <li><a href="#confirmDelete" data-toggle="modal" class="text-error">Delete</a></li>
+  <li><a href="/history/{{page.url}}/">History</a></li>
 </ul>
 {% endblock sidebar %}
