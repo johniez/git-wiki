@@ -97,13 +97,9 @@ class Processors(object):
     def highlite_diff(raw_diff):
         """
         Return HTML string - highlited raw_diff data using markdown.
-        Four space characters are prepended to each diff line, to be
-        considered a code block by markdown.
         """
-        md = markdown.Markdown(['codehilite'])
-        html = md.convert(
-            '\n'.join(map(lambda line: u"{}{}".format(4 * " ", line),
-                          raw_diff.strip().split('\n'))))
+        md = markdown.Markdown(['codehilite', 'fenced_code'])
+        html = md.convert(u'```diff\n{}\n```'.format(raw_diff))
         return html
 
     @staticmethod
