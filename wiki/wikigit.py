@@ -5,7 +5,7 @@
 from wiki.core import Wiki
 from wiki.core import Processors
 from wiki.core import Page
-import named_locks
+from wiki import named_locks
 import datetime
 import git
 import os
