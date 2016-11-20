@@ -3,7 +3,7 @@
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 """
 from wiki.core import Wiki
-from wiki.core import Processors
+from wiki.core import highlite_diff
 from wiki.core import Page
 from wiki import named_locks
 import datetime
@@ -30,7 +30,7 @@ class WikiGit(Wiki):
 
         def highlite_diff(self):
             if self.data:
-                return Processors.highlite_diff(self.data)
+                return highlite_diff(self.data)
             return ""
 
     def __init__(self, root):

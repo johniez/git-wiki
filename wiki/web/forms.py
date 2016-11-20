@@ -10,7 +10,7 @@ from wtforms import PasswordField
 from wtforms.validators import InputRequired
 from wtforms.validators import ValidationError
 
-from wiki.core import Processors
+from wiki.core import clean_url
 from wiki.web import current_wiki
 from wiki.web import current_users
 from wiki.web import get_app_routes_leading_elements
@@ -20,7 +20,7 @@ class URLForm(Form):
     url = TextField('', [InputRequired()])
 
     def validate_url(form, field):
-        sanitized_url = Processors.clean_url(field.data)
+        sanitized_url = clean_url(field.data)
         system_urls_lead_parts = get_app_routes_leading_elements()
         # Disallow create already used urls.
         # NOTE I'm not sure whether Windows slashes do not need to be
@@ -34,7 +34,7 @@ class URLForm(Form):
                 'The URL "%s" exists already.' % sanitized_url)
 
     def clean_url(self, url):
-        return Processors.clean_url(url)
+        return clean_url(url)
 
 
 class SearchForm(Form):

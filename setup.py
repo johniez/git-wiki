@@ -27,7 +27,7 @@ setup(
         'fasteners>=0.14'
     ],
     setup_requires=['pytest-runner'],
-    tests_require=['pytest'],
+    tests_require=['pytest', 'mock'],
     entry_points={
         'console_scripts': [
             'wiki=wiki.cli:main'
